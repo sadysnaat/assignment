@@ -11,7 +11,7 @@ func main() {
 		fmt.Println(err)
 	}
 
-	//go i.Start()
+	go i.Start()
 	go i.StartHistory()
 	go i.SaveBlock()
 	i.StartDownloading()

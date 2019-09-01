@@ -13,11 +13,12 @@ import (
 
 type Indexer struct {
 	c           *ethclient.Client
-	chs *ethclient.Client
+	chs         *ethclient.Client
 	latestBlock *big.Int
+	// headers channel serves as queue for
 	headers     chan *types.Header
 	blocks      chan *types.Block
-	db *sql.DB
+	db          *sql.DB
 }
 
 func NewIndexer() (Indexer, error) {
@@ -119,23 +120,31 @@ func (in *Indexer) SaveBlock() {
 	for {
 		select {
 		case block := <-in.blocks:
-			fmt.Println("saving block", block.Number(), "to db")
-			fmt.Println(block.Number(), block.Hash().String())
-			b := new(model.Block)
-			b.Hash = block.Hash()
-			b.Number = block.Number()
-			b.DB = in.db
-			b.SaveToDB()
+			// upon receiving a block we must first check
+			// if we have the block at given height in db
+			// if yes we have two possible outcomes
+			// 1. Hash of the block in DB matches the Hash of the block we received
+			// in this case we discard the message as block is already synced.
+			// 2. Hash of the block doesn't match the Hash of the block we received
+			// in this case it means that reorg or fork has happened
 
-			d := new(model.Block)
-			d.Number = block.Number()
-			d.DB = in.db
-			d, err := d.ReadFromDB()
+			b, err := model.GetBlockByNumber(block.Number(), in.db)
 			if err != nil {
 				fmt.Println(err)
 			}
 
-			fmt.Println("getting block", d.Number, d.Hash.String())
+			if b.FoundInDB() {
+				if b.Hash == block.Hash() {
+					continue
+				} else {
+
+				}
+			} else {
+				fmt.Println(b)
+				b.Hash = block.Hash()
+				b.SaveToDB()
+				b.SaveTxsToDB(block.Transactions())
+			}
 		}
 	}
 }
