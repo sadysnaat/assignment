@@ -126,6 +126,16 @@ func (in *Indexer) SaveBlock() {
 			b.Number = block.Number()
 			b.DB = in.db
 			b.SaveToDB()
+
+			d := new(model.Block)
+			d.Number = block.Number()
+			d.DB = in.db
+			d, err := d.ReadFromDB()
+			if err != nil {
+				fmt.Println(err)
+			}
+
+			fmt.Println("getting block", d.Number, d.Hash.String())
 		}
 	}
 }
