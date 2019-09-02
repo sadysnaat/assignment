@@ -97,7 +97,7 @@ func (b *Block) FoundInDB() bool {
 
 func (b *Block) SaveTxsToDB(txs types.Transactions) {
 	for _, tx := range txs {
-		t, err := NewTransaction(tx, b.DB)
+		t, err := NewTransaction(tx, b.DB, b.Number)
 		if err != nil {
 			fmt.Println(err)
 		}

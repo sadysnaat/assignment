@@ -143,7 +143,8 @@ func (in *Indexer) SaveBlock() {
 				fmt.Println(b)
 				b.Hash = block.Hash()
 				b.SaveToDB()
-				b.SaveTxsToDB(block.Transactions())
+				txs := block.Transactions()
+				b.SaveTxsToDB(txs)
 			}
 		}
 	}
