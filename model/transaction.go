@@ -45,13 +45,13 @@ func (tx *Transaction) SaveToDB()  {
 	}
 }
 
-func NewTransaction(tx *types.Transaction, db *sql.DB, b *big.Int) (*Transaction, error) {
+func NewTransaction(tx *types.Transaction, txr *types.Receipt, db *sql.DB, b *big.Int) (*Transaction, error) {
 	msg, err := tx.AsMessage(types.NewEIP155Signer(tx.ChainId()))
 	if err != nil {
 		fmt.Println(err)
 	}
 
-	fmt.Println("debug tx", tx.Value(), msg.Gas())
+	fmt.Println("debug tx", tx.Value(), msg.Gas(), txr.GasUsed, txr.CumulativeGasUsed)
 	var t *Transaction
 	if tx.To() != nil {
 		t = &Transaction{
@@ -61,7 +61,7 @@ func NewTransaction(tx *types.Transaction, db *sql.DB, b *big.Int) (*Transaction
 			db:   db,
 			Block: b,
 			Value: tx.Value(),
-			Fee: tx.Gas() * tx.GasPrice().Uint64(),
+			Fee: txr.GasUsed,
 		}
 	} else {
 		t = &Transaction{
@@ -71,7 +71,7 @@ func NewTransaction(tx *types.Transaction, db *sql.DB, b *big.Int) (*Transaction
 			db:   db,
 			Block: b,
 			Value: tx.Value(),
-			Fee: tx.Gas() * tx.GasPrice().Uint64(),
+			Fee: txr.GasUsed,
 		}
 	}
 

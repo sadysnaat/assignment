@@ -1,19 +1,19 @@
 package main
 
-import (
-	"assignment/indexer"
-	"fmt"
-)
+import "assignment/server"
 
 func main() {
-	i, err := indexer.NewIndexer()
-	if err != nil {
-		fmt.Println(err)
-	}
+	//i, err := indexer.NewIndexer()
+	//if err != nil {
+	//	fmt.Println(err)
+	//}
 
-	go i.Start()
-	go i.StartHistory()
-	go i.SaveBlock()
-	i.StartDownloading()
+	//go i.Start()
+	//go i.StartHistory()
+	//go i.SaveBlock()
+	//i.StartDownloading()
+
+	s := server.NewServer()
+	s.Start()
 
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	_ "github.com/go-sql-driver/mysql"
 	"math/big"
+	"time"
 )
 
 type Indexer struct {
@@ -142,9 +143,19 @@ func (in *Indexer) SaveBlock() {
 			} else {
 				fmt.Println(b)
 				b.Hash = block.Hash()
+				b.Time = time.Unix(int64(block.Time()), 0)
 				b.SaveToDB()
 				txs := block.Transactions()
-				b.SaveTxsToDB(txs)
+				var txr []*types.Receipt
+				block.Time()
+				for _, tx := range txs {
+					recpt, err := in.chs.TransactionReceipt(context.Background(), tx.Hash())
+					if err != nil {
+						continue
+					}
+					txr = append(txr, recpt)
+				}
+				b.SaveTxsToDB(txs, txr, block.ReceivedAt)
 			}
 		}
 	}
