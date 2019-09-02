@@ -1,25 +1,23 @@
 package server
 
 import (
-	"assignment/model"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
+	"github.com/sadysnaat/assignment/model"
 	"net/http"
 	"strconv"
 )
 
 type Server struct {
-	r *chi.Mux
+	r  *chi.Mux
 	db *sql.DB
 }
 
-func NewServer() *Server {
-
-
+func NewServer(dbURL string) *Server {
 	s := &Server{}
 	s.r = chi.NewRouter()
 
@@ -29,15 +27,15 @@ func NewServer() *Server {
 		r.Get("/{account}", s.GetTransactions)
 	})
 
-	db, err := sql.Open("mysql", "root:my-secret-pw@tcp(localhost:32768)/assignment")
+	db, err := sql.Open("mysql", dbURL)
 	if err != nil {
-		fmt.Println(err)
+		panic(err)
 	}
 	s.db = db
 	return s
 }
 
-func (s *Server) GetTransactions(w http.ResponseWriter, r *http.Request)  {
+func (s *Server) GetTransactions(w http.ResponseWriter, r *http.Request) {
 	fmt.Println(r)
 	limit := 10
 	offset := 0
@@ -91,7 +89,10 @@ func (s *Server) GetTransactions(w http.ResponseWriter, r *http.Request)  {
 	return
 }
 
-
-func (s *Server) Start() {
-	http.ListenAndServe("0.0.0.0:8081", s.r)
+func (s *Server) Start() error {
+	err := http.ListenAndServe("0.0.0.0:8081", s.r)
+	if err != nil {
+		return err
+	}
+	return nil
 }

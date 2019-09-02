@@ -13,17 +13,17 @@ import (
 )
 
 type Transaction struct {
-	From common.Address `json:"from"`
-	To   common.Address `json:"to"`
-	Hash common.Hash `json:"hash"`
-	Block *big.Int `json:"block"`
-	Value *big.Int `json:"value"`
-	Fee uint64 `json:"fee"`
-	Time time.Time `json:"time"`
-	db   *sql.DB
+	From  common.Address `json:"from"`
+	To    common.Address `json:"to"`
+	Hash  common.Hash    `json:"hash"`
+	Block *big.Int       `json:"block"`
+	Value *big.Int       `json:"value"`
+	Fee   uint64         `json:"fee"`
+	Time  time.Time      `json:"time"`
+	db    *sql.DB
 }
 
-func (tx *Transaction)TransactionsForAccount(address common.Address, limit, offset int, order, sortBy string) ([]*Transaction, error) {
+func (tx *Transaction) TransactionsForAccount(address common.Address, limit, offset int, order, sortBy string) ([]*Transaction, error) {
 	var txs []*Transaction
 	query := `select
        t.to_addr,
@@ -40,7 +40,6 @@ where t.to_addr = X'%s'
 or t.from_addr = X'%s'
 order by %s %s
 limit %d offset %d`
-	fmt.Println(tx.toBytes(address.Bytes()))
 	rows, err := tx.db.Query(fmt.Sprintf(query,
 		tx.toBytes(address.Bytes()),
 		tx.toBytes(address.Bytes()),
@@ -64,7 +63,6 @@ limit %d offset %d`
 		t.Block = big.NewInt(block)
 		t.Value, _ = big.NewFloat(value).Int(t.Value)
 		t.Fee, _ = big.NewFloat(fee).Uint64()
-		fmt.Println(value)
 		if time.Valid {
 			fmt.Println(time.Time)
 			t.Time = time.Time
@@ -75,7 +73,6 @@ limit %d offset %d`
 		txs = append(txs, t)
 	}
 
-	fmt.Println(len(txs))
 	return txs, nil
 }
 
@@ -84,9 +81,7 @@ func (tx *Transaction) WithDB(db *sql.DB) *Transaction {
 	return tx
 }
 
-func (tx *Transaction) SaveToDB()  {
-	fmt.Println("debug tx", tx)
-	fmt.Println("saving tx to db", tx.From.String(), tx.To.String(), tx.Hash.String())
+func (tx *Transaction) SaveToDB() {
 	txn, err := tx.db.Begin()
 	if err != nil {
 		fmt.Println(err)
@@ -116,30 +111,28 @@ func NewTransaction(tx *types.Transaction, txr *types.Receipt, db *sql.DB, b *bi
 		fmt.Println(err)
 	}
 
-	fmt.Println("debug tx", tx.Value(), msg.Gas(), txr.GasUsed, txr.CumulativeGasUsed)
 	var t *Transaction
 	if tx.To() != nil {
 		t = &Transaction{
-			From: *tx.To(),
-			To: msg.From(),
-			Hash: tx.Hash(),
-			db:   db,
+			From:  *tx.To(),
+			To:    msg.From(),
+			Hash:  tx.Hash(),
+			db:    db,
 			Block: b,
 			Value: tx.Value(),
-			Fee: txr.GasUsed,
+			Fee:   txr.GasUsed,
 		}
 	} else {
 		t = &Transaction{
-			From: common.Address{},
-			To: msg.From(),
-			Hash: tx.Hash(),
-			db:   db,
+			From:  common.Address{},
+			To:    msg.From(),
+			Hash:  tx.Hash(),
+			db:    db,
 			Block: b,
 			Value: tx.Value(),
-			Fee: txr.GasUsed,
+			Fee:   txr.GasUsed,
 		}
 	}
-
 
 	return t, nil
 }
@@ -147,4 +140,3 @@ func NewTransaction(tx *types.Transaction, txr *types.Receipt, db *sql.DB, b *bi
 func (tx *Transaction) toBytes(b []byte) string {
 	return hex.EncodeToString(b)
 }
-

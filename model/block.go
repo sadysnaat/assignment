@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/go-sql-driver/mysql"
 	"math/big"
 	"time"
 )
@@ -20,7 +21,7 @@ type Block struct {
 	Hash   common.Hash
 	Number *big.Int
 	found  bool
-	Time time.Time
+	Time   time.Time
 	DB     *sql.DB
 }
 
@@ -56,15 +57,12 @@ func (b *Block) SaveToDB() {
 func (b *Block) ReadFromDB() (*Block, error) {
 	var n int64
 	var h []byte
-	var t time.Time
+	var t mysql.NullTime
 	found := false
-	if b.Number == nil {
-		fmt.Println("got nil")
-	}
-	fmt.Println(b.Number.Int64())
+
 	rows, err := b.DB.Query(fmt.Sprintf("select * from blocks where number=%d", b.Number.Int64()))
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println(err, "in block")
 	}
 	defer rows.Close()
 
@@ -78,17 +76,14 @@ func (b *Block) ReadFromDB() (*Block, error) {
 
 	if found {
 		b.Hash = common.BytesToHash(h)
-		b.Time = t
+		if t.Valid {
+			b.Time = t.Time
+		}
 		b.found = true
 		return b, nil
 	}
 
 	return b, ErrBlockNotFound
-}
-
-func (b *Block) Exists() bool {
-	b.DB.Query("select * from blocks where number=X'%s'")
-	return true
 }
 
 func (b *Block) HashBytes() string {

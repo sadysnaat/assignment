@@ -1,13 +1,13 @@
 package indexer
 
 import (
-	"assignment/model"
 	"context"
 	"database/sql"
 	"fmt"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/sadysnaat/assignment/model"
 	"math/big"
 	"time"
 )
@@ -16,19 +16,22 @@ type Indexer struct {
 	c           *ethclient.Client
 	chs         *ethclient.Client
 	latestBlock *big.Int
-	// headers channel serves as queue for
-	headers     chan *types.Header
-	blocks      chan *types.Block
-	db          *sql.DB
+	// headers channel serves as queue for incoming headers
+	// from history queue and newHeads
+	headers chan *types.Header
+
+	// headers channel contain downloaded blocks
+	blocks chan *types.Block
+	db     *sql.DB
 }
 
-func NewIndexer() (Indexer, error) {
+func NewIndexer(wssURL, httpsURL, dbURL string) (Indexer, error) {
 	ch := make(chan *types.Header, 10)
 	cb := make(chan *types.Block, 10)
 
 	i := Indexer{}
 
-	c, err := ethclient.Dial("wss://kovan.infura.io/ws/v3/6c6f87a10e12438f8fbb7fc7c762b37c")
+	c, err := ethclient.Dial(wssURL)
 	if err != nil {
 		return i, err
 	}
@@ -37,7 +40,7 @@ func NewIndexer() (Indexer, error) {
 	i.headers = ch
 	i.blocks = cb
 
-	chS, err := ethclient.Dial("https://kovan.infura.io/v3/6c6f87a10e12438f8fbb7fc7c762b37c")
+	chS, err := ethclient.Dial(httpsURL)
 
 	i.chs = chS
 
@@ -51,12 +54,16 @@ func NewIndexer() (Indexer, error) {
 
 	i.latestBlock = l.Number
 
-	db, err := sql.Open("mysql", "root:my-secret-pw@tcp(localhost:32768)/assignment")
+	db, err := sql.Open("mysql", dbURL)
+	if err != nil {
+		panic("could not connect to database")
+	}
 	i.db = db
 	return i, nil
 }
 
 func (in *Indexer) StartSubscription() {
+	fmt.Println("starting subscription for new head")
 	cH := make(chan *types.Header)
 
 	_, err := in.c.SubscribeNewHead(context.Background(), cH)
@@ -64,22 +71,23 @@ func (in *Indexer) StartSubscription() {
 		fmt.Println(err)
 	}
 
+	// Here we receive updates on the channel cH we iterate through the headers arrived
+	// and pass them to headers queue
 	for value := range cH {
-
 		select {
 		case in.headers <- value:
-			fmt.Println("got block", value.Number)
+			fmt.Println("received new block", value.Number)
 		}
-
 	}
 }
 
+// This function starts queuing headers from latest block received to towards zero
+// It keeps enqueuing smaller block numbers
 func (in *Indexer) StartHistory() {
 	i := in.latestBlock
 	one := big.NewInt(1)
 	zero := big.NewInt(0)
 	for {
-		fmt.Println("history loop", i)
 		if i.Cmp(zero) < 0 {
 			break
 		}
@@ -90,6 +98,8 @@ func (in *Indexer) StartHistory() {
 			continue
 		}
 
+		// write to headers is blocking not to overwhelm the
+		// the headers buffers
 		in.headers <- h
 
 		i = big.NewInt(0).Sub(i, one)
@@ -99,19 +109,22 @@ func (in *Indexer) StartHistory() {
 func (in *Indexer) StartDownloading() {
 	fmt.Println("starting downloader")
 	for header := range in.headers {
-		fmt.Println("downloading block", header.Number)
 		b, err := in.chs.BlockByNumber(context.Background(), header.Number)
 		if err != nil {
-			fmt.Println(err, header.Number, len(in.headers), len(in.blocks))
+			fmt.Println("couldn't find block in canonical chain", header.Number, header.Hash().String())
 			select {
 			case in.headers <- header:
 				fmt.Println("rescheduled block", header.Number)
 			}
 
+			// If we encounter an error while downloading the block we reschedule
+			// the block to headers done above. And continue
 			continue
 		}
 
-		fmt.Println("block found", b.Number())
+		fmt.Println("scheduled downloaded block for indexing", b.Number())
+
+		// If we have found the block we publish to blocks queue
 		in.blocks <- b
 	}
 }
@@ -131,21 +144,25 @@ func (in *Indexer) SaveBlock() {
 
 			b, err := model.GetBlockByNumber(block.Number(), in.db)
 			if err != nil {
-				fmt.Println(err)
+				//fmt.Println(err)
 			}
 
 			if b.FoundInDB() {
 				if b.Hash == block.Hash() {
 					continue
 				} else {
-
+					// If we have reached here this means an reorg has happened or
+					// our data in DB does not the data available in blockchain
+					// time to resolve the reorg.
+					// TODO: deepak implement reorg recovery
 				}
 			} else {
-				fmt.Println(b)
 				b.Hash = block.Hash()
-				b.Time = time.Unix(int64(block.Time()), 0)
+				b.Time = time.Unix(int64(block.Time()), 0).UTC()
 				b.SaveToDB()
 				txs := block.Transactions()
+				// get the transaction receipt as the data of GasUsed is in the
+				// TransactionReceipt Object.
 				var txr []*types.Receipt
 				block.Time()
 				for _, tx := range txs {
@@ -159,4 +176,11 @@ func (in *Indexer) SaveBlock() {
 			}
 		}
 	}
+}
+
+func (in *Indexer) Start() {
+	go in.StartSubscription()
+	go in.StartHistory()
+	go in.SaveBlock()
+	go in.StartDownloading()
 }
