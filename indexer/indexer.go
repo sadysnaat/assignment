@@ -56,7 +56,7 @@ func NewIndexer() (Indexer, error) {
 	return i, nil
 }
 
-func (in *Indexer) Start() {
+func (in *Indexer) StartSubscription() {
 	cH := make(chan *types.Header)
 
 	_, err := in.c.SubscribeNewHead(context.Background(), cH)

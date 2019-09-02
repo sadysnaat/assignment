@@ -6,17 +6,82 @@ import (
 	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/go-sql-driver/mysql"
+	_ "github.com/go-sql-driver/mysql"
 	"math/big"
+	"time"
 )
 
 type Transaction struct {
-	From common.Address
-	To   common.Address
-	Hash common.Hash
-	Block *big.Int
-	Value *big.Int
-	Fee uint64
+	From common.Address `json:"from"`
+	To   common.Address `json:"to"`
+	Hash common.Hash `json:"hash"`
+	Block *big.Int `json:"block"`
+	Value *big.Int `json:"value"`
+	Fee uint64 `json:"fee"`
+	Time time.Time `json:"time"`
 	db   *sql.DB
+}
+
+func (tx *Transaction)TransactionsForAccount(address common.Address, limit, offset int, order, sortBy string) ([]*Transaction, error) {
+	var txs []*Transaction
+	query := `select
+       t.to_addr,
+       t.from_addr,
+		t.hash,
+       b.number,
+       t.amount,
+       t.fee,
+	b. time
+from transactions t join blocks b
+on
+ b.number = t.block
+where t.to_addr = X'%s'
+or t.from_addr = X'%s'
+order by %s %s
+limit %d offset %d`
+	fmt.Println(tx.toBytes(address.Bytes()))
+	rows, err := tx.db.Query(fmt.Sprintf(query,
+		tx.toBytes(address.Bytes()),
+		tx.toBytes(address.Bytes()),
+		sortBy,
+		order,
+		limit,
+		offset))
+	if err != nil {
+		return txs, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		t := new(Transaction)
+		var block int64
+		var value float64
+		var fee float64
+		var time mysql.NullTime
+		rows.Scan(&t.To, &t.From, &t.Hash, &block, &value, &fee, &time)
+
+		t.Block = big.NewInt(block)
+		t.Value, _ = big.NewFloat(value).Int(t.Value)
+		t.Fee, _ = big.NewFloat(fee).Uint64()
+		fmt.Println(value)
+		if time.Valid {
+			fmt.Println(time.Time)
+			t.Time = time.Time
+		} else {
+			fmt.Println("wrong time")
+		}
+		fmt.Println(t)
+		txs = append(txs, t)
+	}
+
+	fmt.Println(len(txs))
+	return txs, nil
+}
+
+func (tx *Transaction) WithDB(db *sql.DB) *Transaction {
+	tx.db = db
+	return tx
 }
 
 func (tx *Transaction) SaveToDB()  {
@@ -82,3 +147,4 @@ func NewTransaction(tx *types.Transaction, txr *types.Receipt, db *sql.DB, b *bi
 func (tx *Transaction) toBytes(b []byte) string {
 	return hex.EncodeToString(b)
 }
+
