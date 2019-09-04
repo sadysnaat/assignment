@@ -12,6 +12,11 @@ import (
 	"time"
 )
 
+var (
+	one = big.NewInt(1)
+	zero = big.NewInt(0)
+)
+
 type Indexer struct {
 	c           *ethclient.Client
 	chs         *ethclient.Client
@@ -92,8 +97,7 @@ func (in *Indexer) StartSubscription(ctx context.Context) {
 // It keeps enqueuing smaller block numbers
 func (in *Indexer) StartHistory(ctx context.Context) {
 	i := in.latestBlock
-	one := big.NewInt(1)
-	zero := big.NewInt(0)
+
 	for {
 		if i.Cmp(zero) < 0 {
 			break
@@ -119,6 +123,41 @@ func (in *Indexer) StartHistory(ctx context.Context) {
 		}
 
 		i = big.NewInt(0).Sub(i, one)
+	}
+}
+
+func (in *Indexer) StartHistoryFrom(ctx context.Context, n *big.Int) {
+	latest, err := in.chs.HeaderByNumber(ctx, nil)
+	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+	} else {
+		l := latest.Number
+		in.latestBlock = l
+		for {
+			if l.Cmp(n) >= 0 {
+				break
+			}
+			h, err := in.c.HeaderByNumber(ctx, n)
+			if err != nil {
+				fmt.Println(err)
+				if ctx.Err() != nil {
+					return
+				} else {
+					continue
+				}
+			}
+
+			select {
+			case in.headers <- h:
+			case <-ctx.Done():
+				fmt.Println("stopping history recovery")
+				return
+			}
+
+			n = big.NewInt(0).Add(n, one)
+		}
 	}
 }
 
@@ -184,7 +223,8 @@ func (in *Indexer) SaveBlock(ctx context.Context) {
 					// our data in DB does not the data available in blockchain
 					// time to resolve the reorg.
 					// TODO: deepak implement reorg recovery
-					in.Stop(ctx)
+					go in.Stop(ctx, block.Number())
+					return
 				}
 			} else {
 				b.Hash = block.Hash()
@@ -243,11 +283,60 @@ func (in *Indexer) RescheduleBlock(b *types.Block) {
 	in.blocks <- b
 }
 
-func (in *Indexer) Stop(ctx context.Context) {
+func (in *Indexer) Stop(ctx context.Context, n *big.Int) {
+	ctxwc, cancel := context.WithCancel(ctx)
+	for {
+		select {
+		case in.sig <- struct{}{}:
+			fmt.Println("stopping the indexer")
+			in.RecoverFromBlock(ctxwc, n)
+			return
+		case <-ctx.Done():
+			cancel()
+			return
+		}
+	}
+}
+
+func (in *Indexer) RecoverFromBlock(ctx context.Context, n *big.Int)  {
+	ni := big.NewInt(0).Set(n)
+	for {
+		ni = big.NewInt(0).Sub(ni, one)
+		if ni.Cmp(zero) < 0 {
+			break
+		}
+
+		b, err := model.GetBlockByNumber(ni, in.db)
+		if err != nil {
+			continue
+		}
+		if b.FoundInDB() {
+			h, err := in.chs.HeaderByNumber(ctx, ni)
+			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+			} else {
+				if h.Hash() == b.Hash {
+					break
+				}
+			}
+		}
+	}
+
+	// Here we have got the least correct block
+	// we start recovering
+
+	// first we delete higher blocks and associated transactions
+	model.DeleteHigherBlocks(ni, in.db)
+
+	// recover blocks between latest correct block and latest block
+	go in.StartHistoryFrom(ctx, ni)
+
+	// start the indexing again
+	go in.Start(ctx)
+
 	select {
-	case in.sig <- struct{}{}:
-		fmt.Println("stopping the indexer")
-		return
 	case <-ctx.Done():
 		return
 	}

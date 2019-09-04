@@ -15,6 +15,7 @@ import (
 type Server struct {
 	r  *chi.Mux
 	db *sql.DB
+	srv *http.Server
 }
 
 func NewServer(dbURL string) *Server {
@@ -32,6 +33,7 @@ func NewServer(dbURL string) *Server {
 		panic(err)
 	}
 	s.db = db
+	s.srv = &http.Server{}
 	return s
 }
 
@@ -97,7 +99,9 @@ func (s *Server) GetTransactions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) Start(apiHost, apiPort string) error {
-	go http.ListenAndServe(fmt.Sprintf("%s:%s", apiHost, apiPort), s.r)
+	s.srv.Addr = fmt.Sprintf("%s:%s", apiHost, apiPort)
+	s.srv.Handler = s.r
+	go s.srv.ListenAndServe()
 	//if err != nil {
 	//	return err
 	//}

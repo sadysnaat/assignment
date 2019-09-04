@@ -34,6 +34,24 @@ func GetBlockByNumber(n *big.Int, db *sql.DB) (*Block, error) {
 	return b, nil
 }
 
+func DeleteHigherBlocks(n *big.Int, db *sql.DB) {
+	tx, err := db.Begin()
+	if err != nil {
+		fmt.Println(err)
+	} else {
+		_, err := tx.Exec(fmt.Sprintf("delete from blocks where number >= %d", n.Int64()))
+		if err != nil {
+			fmt.Println(err)
+		}
+
+		err = tx.Commit()
+		if err != nil {
+			fmt.Println(err)
+		}
+		return
+	}
+}
+
 func (b *Block) SaveToDB() {
 	tx, err := b.DB.Begin()
 	if err != nil {

@@ -6,4 +6,5 @@ create table transactions (
     amount double,
     fee double,
     foreign key (block) references blocks(number)
+        on delete cascade
 );
