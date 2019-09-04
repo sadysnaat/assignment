@@ -80,19 +80,26 @@ func (s *Server) GetTransactions(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Println(txs)
 
+	if len(txs) == 0 {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write(nil)
+		return
+	}
+
 	b, err := json.Marshal(txs)
 	fmt.Println(string(b))
 
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	w.Write(b)
 
 	return
 }
 
-func (s *Server) Start() error {
-	err := http.ListenAndServe("0.0.0.0:8081", s.r)
-	if err != nil {
-		return err
-	}
+func (s *Server) Start(apiHost, apiPort string) error {
+	go http.ListenAndServe(fmt.Sprintf("%s:%s", apiHost, apiPort), s.r)
+	//if err != nil {
+	//	return err
+	//}
 	return nil
 }

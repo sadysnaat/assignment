@@ -16,11 +16,13 @@ docker build -t <image_name> .
 this will generate the docker image
 
 
-Command will require three options
+Command will require five options
 ```go
 wssURL := flag.String("wss-url", "wss://kovan.infura.io/ws/v3/6c6f87a10e12438f8fbb7fc7c762b37c", "websocket url for the subscription")
 httpsURL := flag.String("https-url", "https://kovan.infura.io/v3/6c6f87a10e12438f8fbb7fc7c762b37c", "https url for indexer")
 dbURL := flag.String("db-url", "root:my-secret-pw@tcp(localhost:32768)/assignment", "database uri")
+apiHost := flag.String("api-host", "0.0.0.0", "api host")
+apiPort := flag.String("api-port", "8081", "api port")
 ``` 
 if you are running from docker you will need to provide -db-url in the option 
 if indexer cannot connect to db it will panic

@@ -22,12 +22,15 @@ type Indexer struct {
 
 	// headers channel contain downloaded blocks
 	blocks chan *types.Block
+
+	sig chan struct{}
 	db     *sql.DB
 }
 
 func NewIndexer(wssURL, httpsURL, dbURL string) (Indexer, error) {
 	ch := make(chan *types.Header, 10)
 	cb := make(chan *types.Block, 10)
+	sig := make(chan struct{}, 1)
 
 	i := Indexer{}
 
@@ -39,6 +42,7 @@ func NewIndexer(wssURL, httpsURL, dbURL string) (Indexer, error) {
 	i.c = c
 	i.headers = ch
 	i.blocks = cb
+	i.sig = sig
 
 	chS, err := ethclient.Dial(httpsURL)
 
@@ -62,7 +66,7 @@ func NewIndexer(wssURL, httpsURL, dbURL string) (Indexer, error) {
 	return i, nil
 }
 
-func (in *Indexer) StartSubscription() {
+func (in *Indexer) StartSubscription(ctx context.Context) {
 	fmt.Println("starting subscription for new head")
 	cH := make(chan *types.Header)
 
@@ -77,13 +81,16 @@ func (in *Indexer) StartSubscription() {
 		select {
 		case in.headers <- value:
 			fmt.Println("received new block", value.Number)
+		//case <- ctx.Done():
+		//	fmt.Println("stoppping block subscription")
+		//	return
 		}
 	}
 }
 
 // This function starts queuing headers from latest block received to towards zero
 // It keeps enqueuing smaller block numbers
-func (in *Indexer) StartHistory() {
+func (in *Indexer) StartHistory(ctx context.Context) {
 	i := in.latestBlock
 	one := big.NewInt(1)
 	zero := big.NewInt(0)
@@ -92,15 +99,24 @@ func (in *Indexer) StartHistory() {
 			break
 		}
 
-		h, err := in.c.HeaderByNumber(context.Background(), i)
+		h, err := in.c.HeaderByNumber(ctx, i)
 		if err != nil {
 			fmt.Println(err)
-			continue
+			if ctx.Err() != nil {
+				return
+			} else {
+				continue
+			}
 		}
 
 		// write to headers is blocking not to overwhelm the
 		// the headers buffers
-		in.headers <- h
+		select {
+		case in.headers <- h:
+		case <-ctx.Done():
+			fmt.Println("stopping history")
+			return
+		}
 
 		i = big.NewInt(0).Sub(i, one)
 	}
@@ -161,10 +177,14 @@ func (in *Indexer) SaveBlock() {
 				b.Time = time.Unix(int64(block.Time()), 0).UTC()
 				b.SaveToDB()
 				txs := block.Transactions()
+				// block contains no transactions if better to skip the loop
+				// no more work to do here
+				if len(txs) == 0 {
+					continue
+				}
 				// get the transaction receipt as the data of GasUsed is in the
 				// TransactionReceipt Object.
 				var txr []*types.Receipt
-				block.Time()
 				for _, tx := range txs {
 					recpt, err := in.chs.TransactionReceipt(context.Background(), tx.Hash())
 					if err != nil {
@@ -172,15 +192,43 @@ func (in *Indexer) SaveBlock() {
 					}
 					txr = append(txr, recpt)
 				}
+				// we couldn't fetch as many receipts as my transactions rescheduling block
+				// for indexing
+				if len(txr) != len(txs) {
+					go in.RescheduleBlock(block)
+					continue
+				}
 				b.SaveTxsToDB(txs, txr, block.ReceivedAt)
 			}
+		//case <-ctx.Done():
+		//	fmt.Println("stopping index to db")
+		//	return
 		}
 	}
 }
 
-func (in *Indexer) Start() {
-	go in.StartSubscription()
-	go in.StartHistory()
+func (in *Indexer) Start(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	go in.StartSubscription(ctx)
+	go in.StartHistory(ctx)
 	go in.SaveBlock()
 	go in.StartDownloading()
+
+	go func(ctx context.Context, cancelFunc context.CancelFunc) {
+		select {
+		case <- ctx.Done():
+			return
+		case <- in.sig:
+			cancelFunc()
+		}
+	}(ctx, cancel)
+}
+
+func (in *Indexer) RescheduleBlock(b *types.Block) {
+	fmt.Println("rescheduled block", b.Number())
+	in.blocks <- b
+}
+
+func (in *Indexer) Stop() {
+	in.sig <- struct{}{}
 }
