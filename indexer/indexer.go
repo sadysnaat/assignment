@@ -122,30 +122,43 @@ func (in *Indexer) StartHistory(ctx context.Context) {
 	}
 }
 
-func (in *Indexer) StartDownloading() {
+func (in *Indexer) StartDownloading(ctx context.Context) {
 	fmt.Println("starting downloader")
-	for header := range in.headers {
-		b, err := in.chs.BlockByNumber(context.Background(), header.Number)
-		if err != nil {
-			fmt.Println("couldn't find block in canonical chain", header.Number, header.Hash().String())
-			select {
-			case in.headers <- header:
-				fmt.Println("rescheduled block", header.Number)
+	for {
+		select {
+		case header := <- in.headers:
+			b, err := in.chs.BlockByNumber(ctx, header.Number)
+			if err != nil {
+				if ctx.Err() != nil {
+					fmt.Println(ctx.Err())
+					return
+				}
+				fmt.Println("couldn't find block in canonical chain", header.Number, header.Hash().String())
+				select {
+				case in.headers <- header:
+					fmt.Println("rescheduled block", header.Number)
+				case <- ctx.Done():
+					return
+				}
+
+				// If we encounter an error while downloading the block we reschedule
+				// the block to headers done above. And continue
+				continue
 			}
 
-			// If we encounter an error while downloading the block we reschedule
-			// the block to headers done above. And continue
-			continue
+			fmt.Println("scheduled downloaded block for indexing", b.Number())
+
+			// If we have found the block we publish to blocks queue
+			select {
+			case in.blocks <- b:
+			case <-ctx.Done():
+				return
+			}
 		}
-
-		fmt.Println("scheduled downloaded block for indexing", b.Number())
-
-		// If we have found the block we publish to blocks queue
-		in.blocks <- b
 	}
 }
 
-func (in *Indexer) SaveBlock() {
+func (in *Indexer) SaveBlock(ctx context.Context) {
 	fmt.Println("starting index to db")
 	for {
 		select {
@@ -171,6 +184,7 @@ func (in *Indexer) SaveBlock() {
 					// our data in DB does not the data available in blockchain
 					// time to resolve the reorg.
 					// TODO: deepak implement reorg recovery
+					in.Stop(ctx)
 				}
 			} else {
 				b.Hash = block.Hash()
@@ -200,9 +214,9 @@ func (in *Indexer) SaveBlock() {
 				}
 				b.SaveTxsToDB(txs, txr, block.ReceivedAt)
 			}
-		//case <-ctx.Done():
-		//	fmt.Println("stopping index to db")
-		//	return
+		case <-ctx.Done():
+			fmt.Println("stopping index to db")
+			return
 		}
 	}
 }
@@ -211,8 +225,8 @@ func (in *Indexer) Start(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	go in.StartSubscription(ctx)
 	go in.StartHistory(ctx)
-	go in.SaveBlock()
-	go in.StartDownloading()
+	go in.SaveBlock(ctx)
+	go in.StartDownloading(ctx)
 
 	go func(ctx context.Context, cancelFunc context.CancelFunc) {
 		select {
@@ -229,6 +243,12 @@ func (in *Indexer) RescheduleBlock(b *types.Block) {
 	in.blocks <- b
 }
 
-func (in *Indexer) Stop() {
-	in.sig <- struct{}{}
+func (in *Indexer) Stop(ctx context.Context) {
+	select {
+	case in.sig <- struct{}{}:
+		fmt.Println("stopping the indexer")
+		return
+	case <-ctx.Done():
+		return
+	}
 }
