@@ -47,3 +47,9 @@ run
 assignment -db-url="<user_name>:<password>@tcp(<host_name>:<port>)/<database_name>"
 ````
  
+
+#### API Guide
+Please refer API.md
+
+#### Design 
+Please refer DESIGN.md

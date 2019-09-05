@@ -9,11 +9,12 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/sadysnaat/assignment/model"
 	"math/big"
+	"sync"
 	"time"
 )
 
 var (
-	one = big.NewInt(1)
+	one  = big.NewInt(1)
 	zero = big.NewInt(0)
 )
 
@@ -29,12 +30,12 @@ type Indexer struct {
 	blocks chan *types.Block
 
 	sig chan struct{}
-	db     *sql.DB
+	db  *sql.DB
 }
 
 func NewIndexer(wssURL, httpsURL, dbURL string) (Indexer, error) {
-	ch := make(chan *types.Header, 10)
-	cb := make(chan *types.Block, 10)
+	ch := make(chan *types.Header, 100)
+	cb := make(chan *types.Block, 100)
 	sig := make(chan struct{}, 1)
 
 	i := Indexer{}
@@ -82,13 +83,19 @@ func (in *Indexer) StartSubscription(ctx context.Context) {
 
 	// Here we receive updates on the channel cH we iterate through the headers arrived
 	// and pass them to headers queue
-	for value := range cH {
+	for {
 		select {
-		case in.headers <- value:
-			fmt.Println("received new block", value.Number)
-		//case <- ctx.Done():
-		//	fmt.Println("stoppping block subscription")
-		//	return
+		case value := <-cH:
+			select {
+			case in.headers <- value:
+				fmt.Println("received new block", value.Number)
+			case <-ctx.Done():
+				fmt.Println("stoppping block subscription")
+				return
+			}
+		case <-ctx.Done():
+			fmt.Println("stoppping block subscription")
+			return
 		}
 	}
 }
@@ -165,19 +172,23 @@ func (in *Indexer) StartDownloading(ctx context.Context) {
 	fmt.Println("starting downloader")
 	for {
 		select {
-		case header := <- in.headers:
+		case header := <-in.headers:
 			b, err := in.chs.BlockByNumber(ctx, header.Number)
 			if err != nil {
 				if ctx.Err() != nil {
 					fmt.Println(ctx.Err())
+					fmt.Println("cancelling downloader")
 					return
 				}
 				fmt.Println("couldn't find block in canonical chain", header.Number, header.Hash().String())
 				select {
 				case in.headers <- header:
 					fmt.Println("rescheduled block", header.Number)
-				case <- ctx.Done():
+				case <-ctx.Done():
+					fmt.Println("cancelling downloader")
 					return
+				case <-time.After(5 * time.Second):
+					// give up after 5 seconds to avoid deadlock on  headers write
 				}
 
 				// If we encounter an error while downloading the block we reschedule
@@ -191,8 +202,12 @@ func (in *Indexer) StartDownloading(ctx context.Context) {
 			select {
 			case in.blocks <- b:
 			case <-ctx.Done():
+				fmt.Println("cancelling downloader")
 				return
 			}
+		case <-ctx.Done():
+			fmt.Println("cancelling downloader")
+			return
 		}
 	}
 }
@@ -209,7 +224,6 @@ func (in *Indexer) SaveBlock(ctx context.Context) {
 			// in this case we discard the message as block is already synced.
 			// 2. Hash of the block doesn't match the Hash of the block we received
 			// in this case it means that reorg or fork has happened
-
 			b, err := model.GetBlockByNumber(block.Number(), in.db)
 			if err != nil {
 				//fmt.Println(err)
@@ -227,6 +241,7 @@ func (in *Indexer) SaveBlock(ctx context.Context) {
 					return
 				}
 			} else {
+				ts := time.Now()
 				b.Hash = block.Hash()
 				b.Time = time.Unix(int64(block.Time()), 0).UTC()
 				b.SaveToDB()
@@ -253,6 +268,7 @@ func (in *Indexer) SaveBlock(ctx context.Context) {
 					continue
 				}
 				b.SaveTxsToDB(txs, txr, block.ReceivedAt)
+				fmt.Println("saved block", block.Number(), "to db", time.Since(ts))
 			}
 		case <-ctx.Done():
 			fmt.Println("stopping index to db")
@@ -261,19 +277,28 @@ func (in *Indexer) SaveBlock(ctx context.Context) {
 	}
 }
 
-func (in *Indexer) Start(ctx context.Context) {
+func (in *Indexer) Start(ctx context.Context, wg *sync.WaitGroup) {
 	ctx, cancel := context.WithCancel(ctx)
 	go in.StartSubscription(ctx)
 	go in.StartHistory(ctx)
 	go in.SaveBlock(ctx)
 	go in.StartDownloading(ctx)
+	go in.StartDownloading(ctx)
+	go in.StartDownloading(ctx)
 
 	go func(ctx context.Context, cancelFunc context.CancelFunc) {
 		select {
-		case <- ctx.Done():
+		case <-ctx.Done():
+			fmt.Println("cancelling start")
+			wg.Done()
 			return
-		case <- in.sig:
+		case <-in.sig:
+			fmt.Println("cancelling via reorg")
+			//cancel()
 			cancelFunc()
+			wg.Done()
+			fmt.Println("returning back")
+			return
 		}
 	}(ctx, cancel)
 }
@@ -285,6 +310,7 @@ func (in *Indexer) RescheduleBlock(b *types.Block) {
 
 func (in *Indexer) Stop(ctx context.Context, n *big.Int) {
 	ctxwc, cancel := context.WithCancel(ctx)
+	context.Background()
 	for {
 		select {
 		case in.sig <- struct{}{}:
@@ -298,7 +324,8 @@ func (in *Indexer) Stop(ctx context.Context, n *big.Int) {
 	}
 }
 
-func (in *Indexer) RecoverFromBlock(ctx context.Context, n *big.Int)  {
+func (in *Indexer) RecoverFromBlock(ctx context.Context, n *big.Int) {
+	fmt.Println("starting recovery")
 	ni := big.NewInt(0).Set(n)
 	for {
 		ni = big.NewInt(0).Sub(ni, one)
@@ -331,13 +358,11 @@ func (in *Indexer) RecoverFromBlock(ctx context.Context, n *big.Int)  {
 	model.DeleteHigherBlocks(ni, in.db)
 
 	// recover blocks between latest correct block and latest block
-	go in.StartHistoryFrom(ctx, ni)
-
-	// start the indexing again
-	go in.Start(ctx)
+	in.StartHistoryFrom(ctx, ni)
 
 	select {
 	case <-ctx.Done():
+		fmt.Println("recovery cancelled")
 		return
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/sadysnaat/assignment/server"
 	"os"
 	"os/signal"
+	"sync"
 	"time"
 )
 
@@ -28,7 +29,22 @@ func main() {
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
 
-	go i.Start(ctx)
+	// starts and keeps running the indexer as reorg cancels all the pipelines
+	go func(ctx context.Context) {
+		for {
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go i.Start(ctx, &wg)
+
+			wg.Wait()
+			fmt.Println("indexer has stopped")
+
+			select {
+			case <-ctx.Done():
+				return
+			}
+		}
+	}(ctx)
 
 	s := server.NewServer(*dbURL)
 	err = s.Start(*apiHost, *apiPort)
@@ -40,11 +56,11 @@ func main() {
 	// Run cleanup when signal is received
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt)
-	ctx.Done()
 	select {
 	case <-signalChan:
 		fmt.Println("ctrl+c pressed")
 		cancel()
+		// wait for context cleanup
 		time.Sleep(5 * time.Second)
 	}
 }

@@ -13,8 +13,8 @@ import (
 )
 
 type Server struct {
-	r  *chi.Mux
-	db *sql.DB
+	r   *chi.Mux
+	db  *sql.DB
 	srv *http.Server
 }
 
@@ -89,7 +89,6 @@ func (s *Server) GetTransactions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	b, err := json.Marshal(txs)
-	fmt.Println(string(b))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -101,9 +100,11 @@ func (s *Server) GetTransactions(w http.ResponseWriter, r *http.Request) {
 func (s *Server) Start(apiHost, apiPort string) error {
 	s.srv.Addr = fmt.Sprintf("%s:%s", apiHost, apiPort)
 	s.srv.Handler = s.r
-	go s.srv.ListenAndServe()
-	//if err != nil {
-	//	return err
-	//}
+	go func() {
+		err := s.srv.ListenAndServe()
+		if err != nil {
+			fmt.Println(err)
+		}
+	}()
 	return nil
 }

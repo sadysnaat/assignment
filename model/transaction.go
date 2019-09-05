@@ -57,17 +57,17 @@ limit %d offset %d`
 		var block int64
 		var value float64
 		var fee float64
-		var time mysql.NullTime
-		rows.Scan(&t.To, &t.From, &t.Hash, &block, &value, &fee, &time)
+		var ts mysql.NullTime
+		rows.Scan(&t.To, &t.From, &t.Hash, &block, &value, &fee, &ts)
 
 		t.Block = big.NewInt(block)
 		t.Value, _ = big.NewFloat(value).Int(t.Value)
 		t.Fee, _ = big.NewFloat(fee).Uint64()
-		if time.Valid {
-			fmt.Println(time.Time)
-			t.Time = time.Time
+		if ts.Valid {
+			fmt.Println(ts.Time)
+			t.Time = ts.Time
 		} else {
-			fmt.Println("wrong time")
+			fmt.Println("wrong ts")
 		}
 		fmt.Println(t)
 		txs = append(txs, t)
@@ -112,6 +112,7 @@ func NewTransaction(tx *types.Transaction, txr *types.Receipt, db *sql.DB, b *bi
 	}
 
 	var t *Transaction
+	// if transaction is a contract creation then tx.To will be nil
 	if tx.To() != nil {
 		t = &Transaction{
 			From:  *tx.To(),
